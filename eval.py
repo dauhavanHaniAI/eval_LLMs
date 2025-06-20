@@ -8,7 +8,7 @@ def run_evaluation():
 
     print("Evaluating  Model asko...")
     asko_results = {
-        "RAG": evaluate_task_rag(dataset_rag,call_asko_api),
+        "RAG": evaluate_task_rag(dataset_rag,call_asko_api, call_asko_api),
         "Economy": evaluate_task_economy(dataset_economy, call_asko_api),
         "Summary": evaluate_task_summary(dataset_summary, call_asko_api),
         "Translation": evaluate_task_translation(dataset_translation, call_asko_api),
@@ -17,13 +17,13 @@ def run_evaluation():
 
     print("Evaluating Qwen3-8B...")
     qwen_results = {
-        "RAG": evaluate_task_rag(dataset_rag, call_qwen),
+        "RAG": evaluate_task_rag(dataset_rag, call_qwen, call_qwen),
         "Economy": evaluate_task_economy(dataset_economy, call_qwen),
         "Summary": evaluate_task_summary(dataset_summary, call_qwen),
         "Translation": evaluate_task_translation(dataset_translation, call_qwen),
         "Reasoning": evaluate_task_reasoning(dataset_reasoning, call_qwen)
     }
-
+    
     metrics = ["RAG", "Economy", "Summary", "Translation", "Reasoning"]
     for metric in metrics:
         if metric in ["RAG", "Economy", "Reasoning"]:

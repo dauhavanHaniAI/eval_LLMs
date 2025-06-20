@@ -1,7 +1,29 @@
 from nltk.translate.bleu_score import sentence_bleu
 from rouge_score import rouge_scorer
 import numpy as np
+import re
 from typing import Dict, List
+
+def is_clain_suppoted(context: str, claim: str) -> bool:
+
+    return claim.lower() in context.lower()
+
+def calculate_faithfulness_score(context: str, claims: List[str])->float:
+    if not claims:
+        return 0.0 
+    
+    supported = sum(1 for claim in claims if is_clain_suppoted(context, claim))
+
+    return supported / len(claims)
+
+def extract_claims_by_llm(response_text: str, extraction_api_func: callable[[str], str])->List[str]:
+    prompt = (
+        "Liệt kê các khẳng định (claims) có trong đoạn sau. "
+        "Mỗi khẳng định là một câu hoàn chỉnh, rõ ràng, khách quan.\n"
+        f"Đoạn văn:\n{response_text}"
+    )
+    result = extraction_api_func(prompt)
+    return [claim.strip() for claim in result.split("\n") if claim.strip()]
 
 def calculate_bleu(reference: str, candidate: str) -> float:
     reference = [reference.split()]
@@ -14,34 +36,67 @@ def calculate_rouge(reference: str, candidate: str) -> Dict[str, float]:
     scores = scorer.score(reference, candidate)
     return  {k: v.fmeasure for k, v in scores.items()}
 
-def evaluate_task_rag(data: List[dict], api_call_func: callable) -> List[float]:
-    results = []
+def evaluate_task_rag(data: List[dict], api_call_func: callable[[str], str], extraction_api_func: callable[[str], str]) -> List[float]:
+    result = []
     for item in data:
         context = item["context"]
         question = item["question"]
-        prompt = f"Dựa trên: {context}. {question}"
-        answer = api_call_func(prompt)
-        results.append(1 if answer.strip().lower() in item["answers"][0].lower() else 0)
+        prompt = f"Dựa trên: {context}.{question}"
+
+        response = api_call_func(prompt)
+        claims = extract_claims_by_llm(response, extraction_api_func)
+        score = calculate_faithfulness_score(context, claims)
+        result.append(score)
+
+        return result 
+    
+def evaluate_task_economy(data: List[dict], api_call_func: callable)-> List[float]:
+    results = []
+
+    for item in data:
+        if "question" not in item or "answers" not in item:
+            results.append(0)
+            continue
+
+        question = item["question"]
+        answers = item["answers"]
+
+        keywords = ["lạm phát", "gdp", "tăng trưởng", "kinh tế", "lãi suất", "thương mại"]
+        if not any(kw in question.lower() for kw in keywords):
+            results.append(0)
+            continue
+
+        if isinstance(answers, list):
+            answers_ref = answers[0].lower().strip() if answers else ""
+        else:
+            answers_ref = answers.lower().strip()
+
+        prompt = question
+        answers = api_call_func(prompt).lower().strip()
+
+        is_correct = 1 if answers == answers_ref else 0 
+
+        results.append(is_correct)
+
     return results
 
-def evaluate_task_economy(data: List[dict], api_call_func: callable) -> List[float]:
-    results = []
-    for item in data:
-        prompt = item["question"]
-        answer = api_call_func(prompt)
-        results.append(1 if any(kw in answer.lower() for kw in ["lạm phát", "gdp", "tăng trưởng"]) else 0)
-    return results
+def evaluate_task_summary(data: List[dict], api_call_func: callable)-> List[Dict[str, float]]:
+    resutls = []
 
-def evaluate_task_summary(data: List[dict], api_call_func: callable) -> List[Dict[str, float]]:
-    results = []
     for item in data:
-        text = item["text"]
-        summary_ref = item["summary"]
-        prompt = f"Tóm tắt đoạn sau trong 50 từ: {text}"
+        ducument = item["Document"]
+        summary_ref = item["Summary"]
+
+        prompt= f"Tóm tắt đoạn văn sau một cách ngắn gọn và súc tích: {ducument}"
         summary = api_call_func(prompt)
+
+        summary = re.sub(r'\s+', ' ', summary.strip()).lower()
+        summary_ref = re.sub(r's+', ' ', summary_ref.strip()).lower()
+
         rouge = calculate_rouge(summary_ref, summary)
-        results.append(rouge)
-    return results
+        resutls.append(rouge)
+
+    return resutls
 
 def evaluate_task_translation(data: List[dict], api_call_func: callable) -> List[float]:
     results = []
@@ -60,9 +115,16 @@ def evaluate_task_translation(data: List[dict], api_call_func: callable) -> List
 def evaluate_task_reasoning(data: List[dict], api_call_func: callable) -> List[float]:
     results = []
     for item in data:
-        question = item["question"]
-        answer_ref = item["answer"]
-        prompt = question
-        answer = api_call_func(prompt)
-        results.append(1 if answer.strip().lower() == answer_ref.lower() else 0)
+        text = item["text"]
+        target = item["target_word"].lower().strip()
+
+        prompt = f"Dựa trên đoạn văn sau, từ cuối cùng hợp lý là gì? {text} [Điền từ]"
+        answer = api_call_func(prompt).lower().strip()
+
+        predicted_words = re.findall(r'\w', answer)
+        predicted_word = predicted_words[-1] if predicted_words else ""
+
+        is_correct = 1 if predicted_words == target else 0 
+        results.append(is_correct)
+
     return results
